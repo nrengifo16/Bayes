@@ -1,0 +1,123 @@
+```{r}
+# clear the environment
+rm(list=ls())
+
+# load the data set, mining data carlin
+data = read.csv("MiningDataCarlin.csv", header = TRUE, sep = ",")
+
+quant025=function(x){quantile(x,0.025)} 
+quant975=function(x){quantile(x,0.975)}
+
+full = function(m,lambda,phi,y,n,alpha,beta,gamma,delta){
+       lambda^(alpha-1+ifelse(m>1,sum(y[1:m]),0))*exp(-(beta+m)*lambda)*phi^(gamma-1+ifelse(m<n,sum(y[(m+1):n]),0))*exp(-(delta+n-m)*phi) 
+       } 
+```
+
+```{r}
+y = data$Count
+n = length(y)
+
+# Time-series plot  
+par(mfrow=c(1,1)) 
+plot(1851:1962,y,type="h",xlab="years",ylab="",main="",pch=16) 
+title("Counts of coal mining disasters in Great Britain") 
+points(1891,0,pch=16,col=2) 
+text(1910,6,paste("Sample mean up to 1891 = ",round(mean(y[1:41]),2),sep="")) 
+text(1910,5.7,paste("Sample mean after 1891  = ",round(mean(y[42:n]),2),sep=""))
+
+seg1=y[1:40]
+seg2=y[41:112]
+summary(y)
+summary(seg1)
+summary(seg2)
+```
+
+```{r}
+alpha = 0.001
+beta  = 0.001 
+delta = 0.001 
+gamma = 0.001
+
+# Exact solution
+sn    = sum(y) 
+lprob = NULL 
+for (m in 1:n){
+       sm = sum(y[1:m])
+       lprob = c(lprob,lgamma(alpha+sm)+lgamma(gamma+sn-sm)-(alpha+sm)*log(m+beta)-(gamma+sn-sm)*log(n-m+delta)) 
+       } 
+lprob = lprob-max(lprob) 
+prob  = exp(lprob) 
+prob  = prob/sum(prob) 
+probm = prob 
+meanm = sum(1:n*probm) 
+varm  = sum((1:n-meanm)^2*probm)
+
+# Exact lambda and phi
+sm      = cumsum(y) 
+sm1     = sn-sm 
+N       = 500 
+lambdas = seq(2,5,length=N) 
+phis    = seq(0.01,2,length=N) 
+f       = matrix(0,N,2) 
+E       = rep(0,2) 
+V       = rep(0,2) 
+for (m in 1:n){
+       E[1]  = E[1]  + probm[m]*(sm[m]+alpha)/(m+beta)   
+       E[2]  = E[2]  + probm[m]*(sm1[m]+gamma)/(n-m+delta)   
+       V[1]  = V[1]  + probm[m]*(sm[m]+alpha)/((m+beta)^2)   
+       V[2]  = V[2]  + probm[m]*(sm1[m]+gamma)/((n-m+delta)^2) 
+       } 
+for (i in 1:N){
+       for (m in 1:n){
+             f[i,1] = f[i,1] + dgamma(lambdas[i],sm[m]+alpha,m+beta)*probm[m]
+             f[i,2] = f[i,2] + dgamma(phis[i],sm1[m]+gamma,n-m+delta)*probm[m]   
+                    } 
+             } 
+rbind(cbind(E,sqrt(V)),c(meanm,sqrt(varm)))
+```
+
+```{r}
+# Gibbs sampler
+m = 41           # Initial value for m 
+M0     = 10000   # Burn-in 
+M      = 10000   # posterior draws 
+niter  = M+M0 
+draws  = matrix(0,niter,3) 
+for (iter in 1:niter){   
+    lambda = rgamma(1,ifelse(m>1,sum(y[1:m]),0)+alpha,m+beta)   
+    phi    = rgamma(1,ifelse(m<n,sum(y[(m+1):n]),0)+gamma,n-m+delta)   
+    fulls  = NULL   
+    for (j in 1:n)
+         fulls = c(fulls,full(j,lambda,phi,y,n,alpha,beta,gamma,delta))
+         fulls = fulls/sum(fulls)   
+         m     = sample(1:n,size=1,prob=fulls)
+            draws[iter,] = c(lambda,phi,m) 
+            }  
+draws = draws[(M0+1):niter,]  
+summary = round(cbind(apply(draws,2,mean),sqrt(apply(draws,2,var)), apply(draws,2,quant025),apply(draws,2,quant975)),3)
+summary[3,c(1,3,2)]=1850+round(summary[3,c(1,3,2)])  
+# Posterior summaries 
+ind   = seq(1,M,by=M/1000)  
+par(mfrow=c(2,3)) 
+plot(ind,draws[ind,1],xlab="iteration",ylab="",main=expression(lambda),type="l") 
+plot(ind,draws[ind,2],xlab="iteration",ylab="",main=expression(phi),type="l") 
+plot(ind,1850+draws[ind,3],xlab="iteration",ylab="",main="m",type="l") 
+acf(draws[,1],main="")
+acf(draws[,2],main="")
+acf(draws[,3],main="")
+```
+
+```{r}
+par(mfrow=c(1,2)) 
+hist(draws[,1],xlab="",main=expression(lambda),prob=TRUE);box() 
+hist(draws[,2],xlab="",main=expression(phi),prob=TRUE);box()
+```
+
+```{r}
+# Posterior predictive 
+ns = rep(0,n) 
+for (i in 1:n)
+   ns[i] = mean(draws[,3]==i) 
+plot(table(1850+draws[,3])/M,type="h",xlab="year",main="m",ylab="Probability") 
+# abline(h=1/n)
+```
